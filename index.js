@@ -9,6 +9,7 @@ let expo = new Expo();
 
 app.post("/send-notification", async (req, res) => {
     const { pushTokens, message } = req.body;
+    console.log(pushTokens)
 
     // Validate request
     if (!Array.isArray(pushTokens) || !message) {
