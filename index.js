@@ -1,18 +1,21 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const { Expo } = require("expo-server-sdk");
-let storedToken = '';
+const { createClient } = require("@supabase/supabase-js");
+
+const supabaseUrl = 'https://miiwcyhgsuvthmhxlfzd.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1paXdjeWhnc3V2dGhtaHhsZnpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzA0NTkzNjAsImV4cCI6MjA0NjAzNTM2MH0.dsDqKt41pJm3STbrFi4dt_LCB9LH2Yd3s7PcLUzYnx4';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
 const app = express();
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true })); // Parse URL-encoded bodies
-
 let expo = new Expo();
 
 // Home route with form
 app.get("/", (req, res) => {
     res.send(`
-        <h1>Welcome to the Push Notification Server! ${storedToken || 'No token stored yet.'}</h1>
-       <p>Stored Expo Push Token: ${storedToken || 'No token stored yet.'}</p>
+        <h1>Welcome to the Push Notification Server! </h1>
+       <p>Stored Expo Push Token: </p>
         <form method="POST" action="/send-notification">
             <label for="pushToken">Expo Push Token:</label><br>
             <input type="text" id="pushToken" name="pushToken" required><br><br>
@@ -22,47 +25,40 @@ app.get("/", (req, res) => {
         </form>
     `);
 });
-app.post("/storetoken", (req, res) => {
-    const { token } = req.body;
-    if (token && Expo.isExpoPushToken(token)) {
-        storedToken = token; // Store the token
-        res.status(200).send({ message: "Token stored successfully." });
-    } else {
-        res.status(400).send({ error: "Invalid Expo push token." });
-    }
-});
-// Send notification route
-app.post("/send-notification", async (req, res) => {
-    const pushToken = req.body.pushToken; // Get the push token from the request body
-    const message = req.body.message; // Get the message from the request body
 
-    // Check if the push token is valid
-    if (!Expo.isExpoPushToken(pushToken)) {
-        return res.status(400).send({ error: "Invalid Expo push token" });
-    }
-
-    let messages = [{
-        to: pushToken,
-        sound: "default",
-        body: message,
-        data: { message }
-    }];
-
-    let chunks = expo.chunkPushNotifications(messages);
-    let tickets = [];
+app.post("/send-notifications", async (req, res) => {
+    const message = req.body.message;
 
     try {
+        // Fetch all tokens from Supabase
+        const { data: tokens, error } = await supabase.from('expo_tokens').select('token');
+        if (error) throw error;
+
+        const messages = tokens.map(({ token }) => ({
+            to: token,
+            sound: 'default',
+            body: message,
+            data: { message },
+        }));
+
+        const chunks = expo.chunkPushNotifications(messages);
+        const tickets = [];
+
         for (let chunk of chunks) {
-            let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-            tickets.push(...ticketChunk);
+            try {
+                const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                tickets.push(...ticketChunk);
+            } catch (error) {
+                console.error("Error sending notification chunk:", error);
+            }
         }
-        res.send({ tickets });
+
+        res.status(200).send({ tickets });
     } catch (error) {
-        console.error(error);
-        res.status(500).send({ error: "Error sending notifications" });
+        console.error("Error fetching tokens or sending notifications:", error);
+        res.status(500).send({ error: "Failed to send notifications" });
     }
 });
-
 // Set the port to the Render environment variable if available
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
